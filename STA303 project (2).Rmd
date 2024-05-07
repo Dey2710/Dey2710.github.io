@@ -1,0 +1,238 @@
+---
+title: "STA303 project"
+author: 'Arnav Dey'
+output: pdf_document
+date: "2024-03-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+## To create nice tables
+
+```
+
+```{r}
+# Load the MASS package
+library(MASS)
+# Load the nnet package
+library(nnet)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(reshape2)
+library(glmnet)
+```
+
+```{r}
+install.packages('rms')
+install.packages('pROC')
+```
+```{r}
+install.packages("broom")
+install.packages("knitr")
+library(broom)
+library(knitr)
+
+```
+
+```{r}
+library(rms)
+library(pROC)
+```
+
+
+```{r}
+#reading in stress level dataset
+df_stress <- read.csv('StressLevelDataset.csv')
+glimpse(df_stress)
+```
+
+```{r}
+install.packages('kableExtra')
+library(kableExtra)
+```
+
+
+```{r}
+#checking for missing values
+sapply(df_stress, function(x)sum(is.na(x)))
+```
+
+##fitting student stress model
+
+```{r}
+#creating stress category variable
+df_stress <- df_stress %>% mutate(stress = case_when(stress_level < 2~'low stress', stress_level==2~'high stress'))
+df_stress <- df_stress %>% mutate(stress_category = case_when(stress=='low stress'~0,stress=='high stress'~1))
+```
+
+```{r}
+
+df_stress$peer_pressure <- as.numeric(df_stress$peer_pressure)
+
+#removing blood pressure as blood pressure is used to calculate stress level
+#df_stress$blood_pressure
+df_stress <- subset(df_stress, select= -blood_pressure)
+```
+
+
+```{r}
+#numerical summaries
+summary(df_stress)
+```
+
+##In order to account for confounders, we will include all variables in the model
+
+```{r}
+#initial model
+model_stress <- glm(stress_category~anxiety_level+self_esteem+mental_health_history+depression+headache+sleep_quality+breathing_problem+noise_level+living_conditions+safety+basic_needs+academic_performance+study_load+teacher_student_relationship+future_career_concerns+social_support+peer_pressure+extracurricular_activities+bullying,family=binomial,data=df_stress)
+options(scipen = 999)
+
+summary(model_stress)
+
+
+```
+
+
+```{r}
+
+#ggsave("full_model.jpg", table, device = "jpeg", width = 6, height = 4, dpi = 300)
+
+```
+
+
+
+```{r}
+#testing for interaction terms
+model_interaction <- glm(stress_category~self_esteem+depression+headache+sleep_quality+noise_level+academic_performance+social_support+bullying+extracurricular_activities+teacher_student_relationship+ mental_health_history+self_esteem:mental_health_history+depression:mental_health_history+headache:mental_health_history+sleep_quality:mental_health_history+noise_level:mental_health_history+academic_performance:mental_health_history+social_support:mental_health_history+bullying:mental_health_history+extracurricular_activities:mental_health_history+teacher_student_relationship:mental_health_history, family=binomial,data=df_stress)
+summary(model_interaction)
+
+```
+```{r}
+#revised model with significant interaction terms
+
+model_stress <- glm(stress_category~anxiety_level+self_esteem+mental_health_history+depression+headache+sleep_quality+breathing_problem+noise_level+living_conditions+safety+basic_needs+academic_performance+study_load+teacher_student_relationship+future_career_concerns+social_support+peer_pressure+extracurricular_activities+bullying+bullying:mental_health_history+sleep_quality:mental_health_history,family=binomial,data=df_stress)
+options(scipen = 999)
+summary(model_stress)
+
+
+```
+
+```{r}
+#full model table
+tidy_output_full <- tidy(model_stress)
+#print(tidy_output)
+table_full <- kable(tidy_output_full)
+table_full
+```
+
+
+
+```{r}
+#variable selection using LASSO
+#creating a design matrix
+names <- colnames(df_stress[1:20])
+formula <- as.formula(paste("~", paste(names, collapse = " + ")))
+design_matrix <- model.matrix(formula,data = df_stress)
+#design_matrix
+
+#implementing LASSO model
+lassofit <- glmnet(design_matrix, df_stress$stress_category, alpha = 1)
+coef(lassofit, s=1)
+
+```
+
+
+```{r}
+install.packages('car')
+library(car)
+```
+```{r}
+#checking multicollinearity
+vif(model_stress)
+```
+No serious multicollinearity problems.
+
+
+```{r}
+# influential observations using cooks distance and DFbetas
+dfbetas <- dfbetas(model_stress)
+#dim(dfbetas)
+cutoff <- 2/sqrt(1100)
+
+length(which(abs(dfbetas[,2])>cutoff))
+
+#influential observations
+di <- cooks.distance(model_stress)
+cutoff2 <- qf(0.5,22,1080)
+which(di > cutoff2)
+
+#dffits
+dffits <- dffits(model_stress)
+cutoff_dffits <- 2*sqrt(21/1100)
+length(which(abs(dffits)>cutoff_dffits))
+```
+
+```{r}
+#variable selection using stepwise
+# starting off with the BIC criterion
+sel.var.bic <- step(model_stress, trace = 0, k = log(nrow(df_stress)), direction = "both") 
+select_var_bic<-attr(terms(sel.var.bic), "term.labels")   
+select_var_bic
+
+model_BIC <- glm(stress_category~ self_esteem+sleep_quality+headache+noise_level+mental_health_history+social_support+extracurricular_activities+bullying+mental_health_history:bullying+mental_health_history:sleep_quality+breathing_problem, family=binomial, data=df_stress)
+summary(model_BIC)
+tidy_output_BIC <- tidy(model_BIC)
+#print(tidy_output_BIC)
+table_BIC <- kable(tidy_output_BIC)
+table_BIC
+```
+
+```{r}
+#stepwise selection with AIC criterion
+sel.var.aic <- step(model_stress, trace = 0, k = 2, direction = "both") 
+select_var_aic<-attr(terms(sel.var.aic), "term.labels")   
+select_var_aic
+
+model_AIC <- glm(stress_category~self_esteem+sleep_quality+headache+noise_level+academic_performance+social_support+extracurricular_activities+bullying+mental_health_history+teacher_student_relationship+depression+mental_health_history:bullying+mental_health_history:sleep_quality+breathing_problem, family=binomial, data=df_stress)
+summary(model_AIC)
+tidy_output_AIC <- tidy(model_AIC)
+#print(tidy_output_AIC)
+table_AIC <- kable(tidy_output_AIC)
+table_AIC
+```
+
+
+
+
+```{r}
+#model validation
+#ROC
+roc(df_stress$stress_category, model_BIC$fitted.values, plot= TRUE, print.auc=TRUE, main='ROC curve for BIC model')
+roc(df_stress$stress_category, model_AIC$fitted.values, plot= TRUE, print.auc=TRUE, main='ROC curve for AIC model')
+```
+
+
+```{r}
+#cross validation BIC
+lrm.final.BIC <- lrm(stress_category~ self_esteem+sleep_quality+headache+noise_level+mental_health_history+social_support+extracurricular_activities+bullying+mental_health_history:bullying+mental_health_history:sleep_quality+breathing_problem,data=df_stress,x=TRUE,y=TRUE,model=T)
+
+cross.calib.BIC <- calibrate(lrm.final.BIC, method="crossvalidation", B=10) # model calibration
+plot(cross.calib.BIC, las=1, xlab = "Predicted Probability")
+
+#cross validation AIC
+lrm.final.AIC <- lrm(stress_category~self_esteem+sleep_quality+headache+noise_level+academic_performance+social_support+extracurricular_activities+bullying+mental_health_history+teacher_student_relationship+depression+mental_health_history:bullying+mental_health_history:sleep_quality+breathing_problem,data=df_stress,x=TRUE,y=TRUE,model=T)
+
+cross.calib.AIC <- calibrate(lrm.final.AIC, method="crossvalidation", B=10) # model calibration
+plot(cross.calib.AIC, las=1, xlab = "Predicted Probability")
+
+
+```
+
+
+
+
+
+
+
+
